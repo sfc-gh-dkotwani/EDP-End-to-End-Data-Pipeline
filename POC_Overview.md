@@ -1,8 +1,8 @@
 # BlackRock EDP — POC Overview (One-Pager)
 
 **Project:** Enterprise Data Platform — Snowflake-Native POC  
-**Prepared by:** Snowflake Professional Services  
-**Date:** July 29, 2026  
+**Prepared by:** BlackRock Account Team  
+**Date:** August 3, 2026  
 
 ---
 
@@ -91,5 +91,5 @@ All parameters are configurable for production. Additional entities (positions, 
 ## Next Steps
 
 1. Review this design and confirm POC scope
-2. Snowflake PS builds and demonstrates the end-to-end pipeline
+2. BlackRock Account Team builds and demonstrates the end-to-end pipeline
 3. Walk through results together and discuss production considerations

@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="snowflake-source" content="cortex-agent-authored" />
+  <title>BlackRock EDP POC - Parquet Architecture &amp; Implementation Guide</title>
+  <script type="application/json" id="snowflake-report-metadata">
+  {
+    "generated": "2026-09-16",
+    "intent": "Architecture and implementation guide for BlackRock EDP POC — Parquet file processing path",
+    "sections": [
+      { "id": "overview", "title": "Overview" },
+      { "id": "pipeline-flow", "title": "Pipeline Flow" },
+      { "id": "data-ingestion", "title": "Data Ingestion" },
+      { "id": "data-layers", "title": "Data Layers" },
+      { "id": "data-quality", "title": "Data Quality Checks" },
+      { "id": "schema-changes", "title": "Schema Change Handling" },
+      { "id": "features", "title": "Snowflake Features" },
+      { "id": "stress-test", "title": "Stress Test Results" },
+      { "id": "file-inventory", "title": "File Inventory" }
+    ]
+  }
+  </script>
+  <script src="/libs/mermaid@10.9.6/mermaid.min.js"></script>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
+      max-width: 960px; width: 100%; margin: 0 auto;
+      padding: clamp(16px, 4vw, 32px);
+      color: light-dark(#1f2937, #e5e7eb);
+      background: light-dark(#ffffff, #0f172a);
+      line-height: 1.6;
+    }
+    h1 { color: light-dark(#0f172a, #f1f5f9); font-size: 1.8rem; border-bottom: 3px solid light-dark(#2563eb, #3b82f6); padding-bottom: 8px; margin-top: 0; }
+    h2 { color: light-dark(#1e40af, #60a5fa); font-size: 1.35rem; margin-top: 2.5rem; border-bottom: 1px solid light-dark(#e5e7eb, #374151); padding-bottom: 4px; }
+    h3 { color: light-dark(#1e3a5f, #93c5fd); font-size: 1.1rem; margin-top: 1.5rem; }
+    a { color: light-dark(#2563eb, #60a5fa); }
+    img, svg { max-width: 100%; height: auto; }
+    code { background: light-dark(#f3f4f6, #1e293b); padding: 2px 5px; border-radius: 3px; font-size: 0.88em; }
+    pre { background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 6px; padding: 14px; overflow-x: auto; font-size: 0.85em; line-height: 1.5; }
+    pre code { background: none; padding: 0; }
+    .table-wrap { overflow-x: auto; margin: 16px 0; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.9em; }
+    th, td { border: 1px solid light-dark(#d1d5db, #374151); padding: 8px 12px; text-align: left; }
+    th { background: light-dark(#f0f4ff, #1e293b); font-weight: 600; white-space: nowrap; }
+    tr:nth-child(even) { background: light-dark(#f9fafb, #111827); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.78em; font-weight: 600; }
+    .badge-blue { background: light-dark(#dbeafe, #1e3a5f); color: light-dark(#1e40af, #93c5fd); }
+    .badge-green { background: light-dark(#dcfce7, #14532d); color: light-dark(#166534, #86efac); }
+    .badge-amber { background: light-dark(#fef3c7, #451a03); color: light-dark(#92400e, #fbbf24); }
+    .badge-red { background: light-dark(#fee2e2, #450a0a); color: light-dark(#991b1b, #fca5a5); }
+    .callout { border-left: 4px solid; padding: 12px 16px; margin: 16px 0; border-radius: 0 6px 6px 0; }
+    .callout-info { border-color: light-dark(#3b82f6, #60a5fa); background: light-dark(#eff6ff, #0c1a30); }
+    .callout-warn { border-color: light-dark(#f59e0b, #fbbf24); background: light-dark(#fffbeb, #1a1500); }
+    .callout-tip { border-color: light-dark(#10b981, #34d399); background: light-dark(#ecfdf5, #021a10); }
+    .callout strong { display: block; margin-bottom: 4px; }
+    .toc { background: light-dark(#f8fafc, #1e293b); border: 1px solid light-dark(#e2e8f0, #334155); border-radius: 8px; padding: 16px 24px; margin: 16px 0; }
+    .toc ol { margin: 8px 0 0 0; padding-left: 20px; }
+    .toc li { margin: 4px 0; }
+    .toc a { text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
+    .metric-card { background: light-dark(#f0f4ff, #1e293b); border: 1px solid light-dark(#dbeafe, #334155); border-radius: 8px; padding: 14px; text-align: center; }
+    .metric-card .value { font-size: 1.6rem; font-weight: 700; color: light-dark(#1e40af, #60a5fa); }
+    .metric-card .label { font-size: 0.82em; color: light-dark(#6b7280, #9ca3af); margin-top: 4px; }
+    .mermaid { margin: 16px 0; }
+    .layer-section { margin-left: 12px; padding-left: 16px; border-left: 2px solid light-dark(#dbeafe, #1e3a5f); }
+    .subtitle { color: light-dark(#6b7280, #9ca3af); font-size: 0.95em; margin-top: -8px; }
+    footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid light-dark(#e5e7eb, #374151); font-size: 0.82em; color: light-dark(#9ca3af, #6b7280); }
+  </style>
+</head>
+<body>
+
+  <h1>BlackRock EDP POC &mdash; Parquet Processing</h1>
+  <p class="subtitle">Enterprise Data Pipeline &mdash; Architecture &amp; Implementation Guide</p>
+
+  <div class="metric-grid">
+    <div class="metric-card"><div class="value">6</div><div class="label">Pipeline Steps</div></div>
+    <div class="metric-card"><div class="value">42</div><div class="label">Data Quality Checks</div></div>
+    <div class="metric-card"><div class="value">3</div><div class="label">Validation Layers</div></div>
+    <div class="metric-card"><div class="value">~8</div><div class="label">Table Scans per Run</div></div>
+    <div class="metric-card"><div class="value">322.5M</div><div class="label">Rows Stress Tested</div></div>
+  </div>
+
+  <nav class="toc">
+    <strong>Contents</strong>
+    <ol>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#pipeline-flow">Pipeline Flow</a></li>
+      <li><a href="#data-ingestion">Data Ingestion</a></li>
+      <li><a href="#data-layers">Data Layers</a></li>
+      <li><a href="#data-quality">Data Quality Checks</a></li>
+      <li><a href="#schema-changes">Schema Change Handling</a></li>
+      <li><a href="#features">Snowflake Features Used</a></li>
+      <li><a href="#stress-test">Stress Test Results</a></li>
+      <li><a href="#file-inventory">File Inventory</a></li>
+    </ol>
+  </nav>
+
+  <!-- ======================================================= -->
+  <h2 id="overview">1. Overview</h2>
+
+  <p>This POC implements an end-to-end data pipeline for BlackRock's transaction data on Snowflake. Parquet files are ingested into a schema-flexible VARIANT mirror layer, validated across three quality gates, transformed into typed staging tables via dbt, and surfaced in an auto-refreshing presentation layer with derived analytics columns.</p>
+
+  <p>The pipeline runs as a 6-step task DAG (every 4 hours or on-demand), with 42 data quality checks spanning completeness, format, domain, referential integrity, cross-table consistency, and freshness. All quality results are logged to an audit layer, and email alerts fire on any failure.</p>
+
+  <!-- ======================================================= -->
+  <h2 id="pipeline-flow">2. Pipeline Flow</h2>
+
+  <pre class="mermaid">
+graph LR
+    PQ[Parquet Files] --> STAGE[Internal Stage]
+    STAGE --> INGEST[Ingest Task]
+    INGEST --> MIRROR[Mirror Layer - VARIANT]
+    MIRROR --> MLTDQ[ML TDQ - 17 checks]
+    MLTDQ --> DBT[dbt Transform]
+    DBT --> STG[Staging Layer - Typed]
+    STG --> STGBDQ[STG BDQ - 13 checks]
+    STGBDQ --> DT[Dynamic Table Refresh]
+    DT --> PRES[Presentation Layer]
+    PRES --> SDMBDQ[SDM BDQ - 17 checks]
+    SDMBDQ --> FIN[Finalizer - Audit Log]
+  </pre>
+
+  <p>Each step depends on the previous one succeeding. If any quality gate fails, the pipeline halts and an alert is sent.</p>
+
+  <!-- ======================================================= -->
+  <h2 id="data-ingestion">3. Data Ingestion</h2>
+
+  <h3>How Data Enters Snowflake</h3>
+  <p>Parquet files are uploaded to an internal Snowflake stage. The ingestion task runs a single <code>COPY INTO</code> statement that loads each Parquet row directly as a VARIANT object. Because Parquet is self-describing (column names are embedded in the file metadata), no positional mapping is needed:</p>
+
+  <pre><code>COPY INTO TRANSACTIONS (RAW_DATA, _FILENAME, _FILE_ROW_NUM, _BATCH_ID)
+FROM (
+    SELECT
+        $1,
+        METADATA$FILENAME,
+        METADATA$FILE_ROW_NUMBER,
+        '&lt;batch_uuid&gt;'
+    FROM @RAW_STAGE (FILE_FORMAT =&gt; 'PARQUET_FMT')
+)
+ON_ERROR = 'SKIP_FILE'
+FORCE    = FALSE</code></pre>
+
+  <p>Parquet <code>$1</code> is a VARIANT object that automatically contains all column names and values from the file. Adding, removing, or reordering columns in the source file has no effect on the ingestion mapping.</p>
+
+  <h3>Parquet File Format</h3>
+  <p>The pipeline uses a named file format for consistent Parquet handling:</p>
+
+  <pre><code>CREATE FILE FORMAT IF NOT EXISTS PARQUET_FMT
+    TYPE = 'PARQUET'
+    COMMENT = 'Parquet format for VARIANT mirror ingestion';</code></pre>
+
+  <h3>What Gets Captured</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Column</th><th>What It Stores</th></tr></thead>
+      <tbody>
+        <tr><td><code>RAW_DATA</code></td><td>The complete source row as a VARIANT object with named keys from the Parquet schema</td></tr>
+        <tr><td><code>_LOADED_AT</code></td><td>When the row was ingested (auto-set timestamp)</td></tr>
+        <tr><td><code>_FILENAME</code></td><td>Which file this row came from</td></tr>
+        <tr><td><code>_FILE_ROW_NUM</code></td><td>The row number within that file</td></tr>
+        <tr><td><code>_BATCH_ID</code></td><td>A unique ID grouping all rows from the same pipeline run</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Error Handling</h3>
+  <ul>
+    <li><strong>Corrupt files</strong> are skipped (<code>ON_ERROR = SKIP_FILE</code>) &mdash; the rest of the batch loads successfully</li>
+    <li><strong>New columns</strong> in the Parquet file appear as new keys in the VARIANT &mdash; existing downstream logic is unaffected</li>
+    <li><strong>Already-loaded files</strong> are not re-processed (<code>FORCE = FALSE</code>) &mdash; prevents duplicate data</li>
+    <li><strong>Null representations</strong> (<code>NULL</code>, empty string, <code>N/A</code>, <code>\N</code>) are normalized to SQL NULL</li>
+  </ul>
+
+  <!-- ======================================================= -->
+  <h2 id="data-layers">4. Data Layers</h2>
+
+  <pre class="mermaid">
+graph LR
+    A[Parquet on Stage] -->|COPY INTO| B[Mirror - Raw VARIANT]
+    B -->|dbt extract + type cast| C[Staging - Typed Columns]
+    C -->|Dynamic Table| D[Presentation - Enriched]
+  </pre>
+
+  <h3>Mirror Layer <span class="badge badge-blue">RAW</span></h3>
+  <div class="layer-section">
+    <p>Immutable landing zone. Every Parquet row is preserved exactly as received in a VARIANT object with the original column names. No type casting, no filtering, no deduplication. This provides full fidelity for audit and replay if downstream issues are discovered.</p>
+    <p><strong>Quality gate:</strong> 17 checks validate completeness, format, type casting, domain, uniqueness, and schema immediately after load.</p>
+  </div>
+
+  <h3>Staging Layer <span class="badge badge-green">TYPED</span></h3>
+  <div class="layer-section">
+    <p>Managed by dbt (incremental materialization). Extracts typed columns from the VARIANT mirror:</p>
+    <ul>
+      <li>Type casting: <code>AMOUNT</code> to DECIMAL(18,4), <code>TXN_DATE</code> to DATE, etc.</li>
+      <li>Cleansing: uppercase and trim on CURRENCY and STATUS</li>
+      <li>Filtering: rows with null TXN_ID, AMOUNT, or TXN_DATE are excluded</li>
+      <li>Incremental: only processes newly arrived rows</li>
+    </ul>
+    <p><strong>Quality gate:</strong> 13 checks validate schema structure, referential integrity against reference tables (accounts and instruments), and data provenance.</p>
+  </div>
+
+  <h3>Presentation Layer <span class="badge badge-amber">ENRICHED</span></h3>
+  <div class="layer-section">
+    <p>A Dynamic Table that auto-refreshes from staging. Adds derived analytics columns:</p>
+    <ul>
+      <li><code>TXN_MONTH</code>, <code>TXN_YEAR</code>, <code>TXN_DAY_OF_WEEK</code> &mdash; time dimensions for reporting</li>
+      <li><code>RUNNING_POSITION_BY_ACCOUNT</code> &mdash; cumulative position (running total of AMOUNT per account)</li>
+    </ul>
+    <p><strong>Quality gate:</strong> 17 checks validate derived columns are correct, and that totals, row counts, and dimensions match between staging and presentation.</p>
+  </div>
+
+  <h3>Reference Layer</h3>
+  <div class="layer-section">
+    <p>Lookup tables for Accounts (500) and Instruments (2,000). Every ACCOUNT_ID and INSTRUMENT_ID in staging must exist in the corresponding reference table.</p>
+  </div>
+
+  <h3>Audit Layer</h3>
+  <div class="layer-section">
+    <p>Records the outcome of every quality check, every pipeline run, and performance benchmarks. Key tables:</p>
+    <ul>
+      <li><code>TDQ_RESULTS</code> &mdash; per-layer quality check results: batch ID, layer (ML/STG/SDM), pass/fail, failed details, row count, and execution time</li>
+      <li><code>PIPELINE_RUNS</code> &mdash; one row per pipeline execution: batch ID, status, which quality gates passed</li>
+      <li><code>STRESS_TEST_RESULTS</code> &mdash; per-task timing for each pipeline run: phase, start/end timestamps, duration, rows processed, warehouse size</li>
+      <li><code>PERFORMANCE_BENCHMARKS</code> &mdash; rows/sec metrics per layer and warehouse size</li>
+    </ul>
+  </div>
+
+  <h3>Finalizer &mdash; Automated Timing Capture</h3>
+  <div class="layer-section">
+    <p>The last task in the DAG (<code>FINALIZER_TASK_V2</code>) calls the <code>RUN_FINALIZER_V2()</code> stored procedure, which automatically captures per-task timing without manual intervention. It derives data from three sources:</p>
+    <ul>
+      <li><strong>TDQ_RESULTS</strong> &mdash; each quality SP (ML TDQ, STG BDQ, SDM BDQ) writes <code>RUN_AT</code> (completion timestamp) and <code>EXECUTION_TIME_SECS</code>. Start time is computed as <code>RUN_AT - EXECUTION_TIME_SECS</code>.</li>
+      <li><strong>COPY_HISTORY</strong> &mdash; the earliest <code>LAST_LOAD_TIME</code> from the most recent COPY INTO provides the ingest start time.</li>
+      <li><strong>SHOW WAREHOUSES</strong> &mdash; warehouse sizes are looked up dynamically at runtime (not hardcoded), so resizing a warehouse is automatically reflected in subsequent pipeline runs.</li>
+    </ul>
+    <p>Gap-derived timing: dbt duration is the gap between ML TDQ end and STG BDQ start; ingest duration is the gap between COPY start and ML TDQ start.</p>
+    <p>The finalizer writes 6 rows to <code>STRESS_TEST_RESULTS</code>: one for each of the 5 pipeline tasks plus a <code>TOTAL_PIPELINE_E2E</code> summary row.</p>
+  </div>
+
+  <!-- ======================================================= -->
+  <h2 id="data-quality">5. Data Quality Checks</h2>
+
+  <h3>How Validation Works</h3>
+  <p>Data quality checks run at three layers (Mirror, Staging, Presentation). Each layer uses the same two-phase pattern: <strong>Snowpark computes metrics server-side</strong>, then <strong>Great Expectations validates the results</strong>.</p>
+
+  <h3>Snowpark Lazy Execution &mdash; Why It Matters for Performance</h3>
+  <p>Snowpark's DataFrame API builds a SQL query plan in Python <strong>without executing anything</strong> until <code>.collect()</code> is called. This means all checks at a layer &mdash; null counts, format validations, domain checks, type-cast failures &mdash; are combined into a single SQL <code>SELECT</code> with multiple <code>COUNT_IF</code> aggregations. Snowflake executes this as <strong>one table scan</strong>, regardless of how many individual checks are defined.</p>
+
+  <pre><code># Python (Snowpark) &mdash; builds query plan, does NOT execute yet
+metrics_df = batch_df.agg(
+    COUNT_IF(col("TXN_ID").is_null()).alias("NULL_TXN_ID"),
+    COUNT_IF(col("AMOUNT").is_null()).alias("NULL_AMOUNT"),
+    COUNT_IF(~col("CURRENCY").isin(["USD","EUR","GBP"])).alias("BAD_DOMAIN_CURRENCY"),
+    # ... 15+ more checks ...
+    count("*").alias("TOTAL_ROWS"),
+)
+
+# NOW executes &mdash; Snowflake runs ONE optimized query
+metrics_row = metrics_df.collect()[0]
+# Result: {"NULL_TXN_ID": 0, "NULL_AMOUNT": 0, "BAD_DOMAIN_CURRENCY": 0, ...}</code></pre>
+
+  <p>Without lazy execution, each check would require a separate query and a separate table scan. With 15+ checks per layer and millions of rows, this would multiply query time significantly. The lazy approach reduces this to 2 scans per layer (one for batch metrics, one for cross-batch or cross-table joins).</p>
+
+  <h3>Great Expectations (GX) &mdash; How It Is Used</h3>
+  <p>GX does <strong>not</strong> scan any data directly. Instead, it validates the pre-computed metrics row from Snowpark. This is a key optimization: GX operates on a single-row Pandas DataFrame containing aggregated counts, not millions of raw records.</p>
+
+  <pre><code># The metrics row from Snowpark becomes a 1-row Pandas DataFrame
+metrics_pdf = pd.DataFrame([{"NULL_TXN_ID": 0, "BAD_DOMAIN_CURRENCY": 0, "TOTAL_ROWS": 1000000}])
+
+# GX validates each metric: "NULL_TXN_ID should be between 0 and 0" (i.e., must equal 0)
+suite.add_expectation(
+    ExpectColumnValuesToBeBetween(column="NULL_TXN_ID", min_value=0, max_value=0)
+)
+suite.add_expectation(
+    ExpectColumnValuesToBeBetween(column="TOTAL_ROWS", min_value=1, max_value=None)
+)
+
+# Run GX validation &mdash; instant (1 row, no data scan)
+result = validation_definition.run(batch_parameters={"dataframe": metrics_pdf})</code></pre>
+
+  <p>GX provides:</p>
+  <ul>
+    <li><strong>Structured results</strong> &mdash; each check has a category, description, pass/fail status, and observed value</li>
+    <li><strong>Expectation suites</strong> &mdash; checks are defined declaratively and can be versioned, shared, and audited</li>
+    <li><strong>Consistent reporting</strong> &mdash; all three layers use the same GX validation pattern, making results comparable</li>
+  </ul>
+
+  <h3>Alternative Approaches: Native SQL and DMFs</h3>
+  <p>Every quality check in the pipeline can also be implemented without GX or Snowpark. The code includes inline comments showing both alternatives:</p>
+
+  <h4>Option A: Native SQL</h4>
+  <p>Replace the entire Snowpark + GX pattern with a single SQL query:</p>
+  <pre><code>-- Direct SQL equivalent of the Snowpark aggregation
+SELECT
+    COUNT_IF(RAW_DATA:TXN_ID IS NULL) AS null_txn_id,
+    COUNT_IF(RAW_DATA:AMOUNT IS NULL) AS null_amount,
+    COUNT_IF(NOT RAW_DATA:CURRENCY::VARCHAR IN ('USD','EUR','GBP','JPY','CHF')) AS bad_domain_currency,
+    COUNT(*) AS total_rows
+FROM MIRROR.TRANSACTIONS
+WHERE _BATCH_ID = :batch_id;</code></pre>
+  <p><strong>Tradeoff:</strong> Identical performance (same single scan). Loses GX's structured reporting and expectation management. Best for teams that prefer pure SQL and build their own alerting.</p>
+
+  <h4>Option B: Data Metric Functions (DMFs)</h4>
+  <p>Attach checks directly to the table. Snowflake runs them automatically when data changes &mdash; no stored procedures, no tasks, no warehouse scheduling:</p>
+  <pre><code>-- Attach a built-in DMF to the table
+ALTER TABLE STAGING.STG_TRANSACTIONS
+    ADD DATA METRIC FUNCTION SNOWFLAKE.CORE.NULL_COUNT ON (TXN_ID);
+
+-- Snowflake runs it automatically after data changes
+ALTER TABLE STAGING.STG_TRANSACTIONS
+    SET DATA_METRIC_SCHEDULE = 'TRIGGER_ON_CHANGES';</code></pre>
+  <p><strong>Tradeoff:</strong> Zero operational overhead (serverless, automatic). Cannot scope checks to a specific batch &mdash; DMFs validate the entire table. Best for table-level health monitoring alongside batch-scoped checks.</p>
+
+  <div class="callout callout-tip">
+    <strong>Recommended Approach</strong>
+    Use <strong>Snowpark + GX</strong> (current implementation) for batch-scoped and cross-table checks that need structured reporting. Use <strong>DMFs</strong> alongside for continuous, table-level monitoring. Use <strong>native SQL</strong> if the team prefers to avoid Python dependencies entirely.
+  </div>
+
+  <h3>Mirror Layer &mdash; Technical Data Quality (17 checks)</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Category</th><th>Check</th><th>What It Validates</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Completeness</td><td>NULL_TXN_ID</td><td>Every row has a transaction ID</td></tr>
+        <tr><td>2</td><td>Completeness</td><td>NULL_ACCOUNT_ID</td><td>Every row has an account ID</td></tr>
+        <tr><td>3</td><td>Completeness</td><td>NULL_AMOUNT</td><td>Every row has an amount</td></tr>
+        <tr><td>4</td><td>Completeness</td><td>NULL_TXN_DATE</td><td>Every row has a transaction date</td></tr>
+        <tr><td>5</td><td>Format</td><td>BAD_FMT_AMOUNT</td><td>Amount contains only valid numeric characters</td></tr>
+        <tr><td>6</td><td>Format</td><td>BAD_FMT_TXN_ID</td><td>Transaction ID starts with "TXN-"</td></tr>
+        <tr><td>7</td><td>Format</td><td>BAD_FMT_CURRENCY</td><td>Currency is a 3-letter uppercase code</td></tr>
+        <tr><td>8</td><td>Type</td><td>BAD_CAST_AMOUNT</td><td>Amount can be parsed as a decimal number</td></tr>
+        <tr><td>9</td><td>Type</td><td>BAD_CAST_TXN_DATE</td><td>Transaction date can be parsed as a date</td></tr>
+        <tr><td>10</td><td>Type</td><td>BAD_CAST_SETTLE_DATE</td><td>Settlement date can be parsed as a date</td></tr>
+        <tr><td>11</td><td>Domain</td><td>BAD_DOMAIN_CURRENCY</td><td>Currency is one of: USD, EUR, GBP, JPY, CHF</td></tr>
+        <tr><td>12</td><td>Domain</td><td>BAD_DOMAIN_STATUS</td><td>Status is one of: PENDING, SETTLED, CANCELLED, FAILED</td></tr>
+        <tr><td>13</td><td>Uniqueness</td><td>DUP_TXN_ID_IN_BATCH</td><td>No duplicate transaction IDs within the batch</td></tr>
+        <tr><td>14</td><td>Schema</td><td>MISSING_SCHEMA_KEYS</td><td>All 8 expected fields are present in every row</td></tr>
+        <tr><td>15</td><td>Volume</td><td>TOTAL_ROWS</td><td>Row count is at least 1 (no upper bound)</td></tr>
+        <tr><td>16</td><td>Uniqueness</td><td>Cross-batch duplicates</td><td>No transaction IDs duplicated across batches</td></tr>
+        <tr><td>17</td><td>Freshness</td><td>Load recency</td><td>Data was loaded within the last 7 days</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Staging Layer &mdash; Business Data Quality (13 checks)</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Category</th><th>Check</th><th>What It Validates</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Schema</td><td>Column set</td><td>Table has exactly the expected columns</td></tr>
+        <tr><td>2-5</td><td>Completeness</td><td>NULL checks</td><td>TXN_ID, ACCOUNT_ID, AMOUNT, TXN_DATE are not null</td></tr>
+        <tr><td>6</td><td>Uniqueness</td><td>DUP_TXN_ID</td><td>No duplicate transaction IDs</td></tr>
+        <tr><td>7-8</td><td>Domain</td><td>CURRENCY, STATUS</td><td>Values are in the allowed sets</td></tr>
+        <tr><td>9</td><td>Range</td><td>BAD_RANGE_AMOUNT</td><td>Amount is between 0 and 100M</td></tr>
+        <tr><td>10</td><td>Referential</td><td>BAD_REF_ACCOUNT</td><td>Every account ID exists in the Accounts reference table</td></tr>
+        <tr><td>11</td><td>Referential</td><td>BAD_REF_INSTRUMENT</td><td>Every instrument ID exists in the Instruments reference table</td></tr>
+        <tr><td>12</td><td>Provenance</td><td>ORPHAN_BATCHES</td><td>Every batch in staging can be traced back to the mirror layer</td></tr>
+        <tr><td>13</td><td>Volume</td><td>TOTAL_ROWS</td><td>Row count is at least 1 (no upper bound)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Presentation Layer &mdash; Semantic Data Quality (17 checks)</h3>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Category</th><th>Check</th><th>What It Validates</th></tr></thead>
+      <tbody>
+        <tr><td>1-6</td><td>Completeness</td><td>NULL checks</td><td>TXN_ID, ACCOUNT_ID, AMOUNT, TXN_DATE, TXN_MONTH, TXN_YEAR</td></tr>
+        <tr><td>7-8</td><td>Domain</td><td>CURRENCY, STATUS</td><td>Values are in the allowed sets</td></tr>
+        <tr><td>9</td><td>Range</td><td>BAD_RANGE_AMOUNT</td><td>Amount is in valid range</td></tr>
+        <tr><td>10</td><td>Derived</td><td>BAD_DERIVED_TXN_MONTH</td><td>TXN_MONTH correctly derived from TXN_DATE</td></tr>
+        <tr><td>11</td><td>Volume</td><td>TOTAL_ROWS</td><td>Row count is at least 1 (no upper bound)</td></tr>
+        <tr><td>12</td><td>Consistency</td><td>Amount totals</td><td>Total dollar amounts match between staging and presentation</td></tr>
+        <tr><td>13</td><td>Consistency</td><td>Row counts</td><td>Row count difference is within 1%</td></tr>
+        <tr><td>14</td><td>Consistency</td><td>Transaction IDs</td><td>Same set of distinct transaction IDs in both layers</td></tr>
+        <tr><td>15</td><td>Dimension</td><td>Accounts</td><td>All accounts in staging are present in presentation</td></tr>
+        <tr><td>16</td><td>Dimension</td><td>Currencies</td><td>All currencies in staging are present in presentation</td></tr>
+        <tr><td>17</td><td>Freshness</td><td>Lag</td><td>Presentation is within 30 minutes of staging</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>dbt Tests (additional)</h3>
+  <p>The dbt project includes its own tests on the staging table: not_null and unique on TXN_ID, accepted_values on CURRENCY and STATUS, and a custom test that AMOUNT is positive.</p>
+
+  <!-- ======================================================= -->
+  <h2 id="schema-changes">6. Schema Change Handling</h2>
+
+  <p>Because Parquet files are self-describing (columns are identified by name, not position), the pipeline is resilient to most schema changes:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>What Changes</th><th>Impact</th><th>Detected By</th><th>Action Required</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>New column added</strong> (any position)</td>
+          <td><span class="badge badge-green">Safe</span> &mdash; new key appears in VARIANT automatically. Existing downstream extraction is unaffected.</td>
+          <td>N/A (no failure)</td>
+          <td>When ready, update the dbt model to extract the new column.</td>
+        </tr>
+        <tr>
+          <td><strong>Column removed</strong></td>
+          <td><span class="badge badge-amber">Detected</span> &mdash; the removed key is absent from VARIANT. Downstream extraction returns NULL.</td>
+          <td>Completeness checks fail (null count > 0)</td>
+          <td>Update the dbt model and quality checks to reflect the new column set.</td>
+        </tr>
+        <tr>
+          <td><strong>Column reordered</strong></td>
+          <td><span class="badge badge-green">Safe</span> &mdash; Parquet identifies columns by name, not position. Order is irrelevant.</td>
+          <td>N/A (no failure)</td>
+          <td>None.</td>
+        </tr>
+        <tr>
+          <td><strong>Column renamed</strong></td>
+          <td><span class="badge badge-amber">Detected</span> &mdash; old key disappears (extraction returns NULL), new key appears as a new VARIANT field.</td>
+          <td>Completeness checks fail for the old column name</td>
+          <td>Update the dbt model to use the new column name.</td>
+        </tr>
+        <tr>
+          <td><strong>Column data type changed</strong></td>
+          <td><span class="badge badge-amber">Detected</span> &mdash; TRY_CAST in the dbt model returns NULL for incompatible values.</td>
+          <td>Type-cast checks in ML TDQ and completeness checks in staging</td>
+          <td>Update the dbt model cast if the new type is intentional.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ======================================================= -->
+  <h2 id="features">7. Snowflake Features Used</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Feature</th><th>What It Does in This Pipeline</th></tr></thead>
+      <tbody>
+        <tr><td><strong>VARIANT Data Type</strong></td><td>Stores each Parquet row as a flexible JSON object, allowing schema changes without altering the table</td></tr>
+        <tr><td><strong>COPY INTO with Parquet</strong></td><td>Loads Parquet <code>$1</code> directly as a named VARIANT object in one statement &mdash; no positional mapping needed</td></tr>
+        <tr><td><strong>Internal Stage</strong></td><td>Secure file landing zone within Snowflake for Parquet uploads</td></tr>
+        <tr><td><strong>METADATA$ Columns</strong></td><td>Captures source file name and row number for traceability without extra processing</td></tr>
+        <tr><td><strong>Snowpark Python</strong></td><td>Builds SQL query plans in Python that execute on Snowflake compute, combining all quality checks into minimal scans</td></tr>
+        <tr><td><strong>Great Expectations</strong></td><td>Provides structured pass/fail reporting on pre-computed metrics (not raw data)</td></tr>
+        <tr><td><strong>Dynamic Tables</strong></td><td>Auto-refreshing presentation layer with derived columns and window functions</td></tr>
+        <tr><td><strong>Native dbt Projects</strong></td><td>Transforms raw VARIANT data into typed staging columns, deployed and executed natively in Snowflake</td></tr>
+        <tr><td><strong>Task DAG</strong></td><td>Orchestrates the 6-step pipeline with dependency management, scheduled every 4 hours</td></tr>
+        <tr><td><strong>Snowflake Alerts</strong></td><td>Sends email notifications when any quality check fails</td></tr>
+        <tr><td><strong>Data Metric Functions (DMFs)</strong></td><td>Documented as an alternative: Snowflake-native checks that run automatically with no custom code</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ======================================================= -->
+  <h2 id="stress-test">8. Stress Test Results</h2>
+
+  <p>The pipeline was stress-tested with <strong>5,000 Parquet files</strong> containing <strong>322.5 million rows</strong> of synthetic transaction data. All per-task timings were captured automatically by the <code>RUN_FINALIZER_V2</code> stored procedure.</p>
+
+  <div class="metric-grid">
+    <div class="metric-card"><div class="value">5,000</div><div class="label">Parquet Files</div></div>
+    <div class="metric-card"><div class="value">322.5M</div><div class="label">Rows Processed</div></div>
+    <div class="metric-card"><div class="value">6.1 min</div><div class="label">Total E2E Time</div></div>
+    <div class="metric-card"><div class="value">47</div><div class="label">Quality Checks Passed</div></div>
+  </div>
+
+  <h3>Per-Task Breakdown</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Task</th><th>Warehouse</th><th>Size</th><th>Duration</th><th>% of Total</th><th>Details</th></tr></thead>
+      <tbody>
+        <tr><td><strong>INGEST_TASK_V2</strong></td><td>EDP_INGEST_WH</td><td>MEDIUM</td><td>79 sec</td><td>22%</td><td>COPY INTO 322.5M rows from 5,000 Parquet files into VARIANT mirror</td></tr>
+        <tr><td><strong>ML_TDQ_TASK_V2</strong></td><td>EDP_TDQ_WH</td><td>SMALL</td><td>13 sec</td><td>4%</td><td>17 GX checks on VARIANT data (Snowpark lazy agg + cross-batch join)</td></tr>
+        <tr><td><strong>DBT_TASK_V2</strong></td><td>EDP_DBT_WH</td><td>SMALL</td><td>60 sec</td><td>16%</td><td>Incremental MERGE from VARIANT mirror into typed staging table</td></tr>
+        <tr><td><strong>STG_BDQ_TASK_V2</strong></td><td>EDP_TDQ_WH</td><td>SMALL</td><td>8 sec</td><td>2%</td><td>13 checks including referential integrity joins against reference tables</td></tr>
+        <tr><td><strong>SDM_BDQ_TASK_V2</strong></td><td>EDP_TDQ_WH</td><td>SMALL</td><td>198 sec</td><td>54%</td><td>Dynamic Table refresh (~170s) + 17 cross-table consistency checks</td></tr>
+        <tr style="font-weight: 600; background: light-dark(#eff6ff, #0c1a30);"><td><strong>TOTAL E2E</strong></td><td colspan="2">MEDIUM</td><td>367 sec</td><td>100%</td><td>5 tasks + finalizer, all quality gates passed</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Observations</h3>
+  <ul>
+    <li><strong>SDM BDQ is the bottleneck</strong> (54% of total) &mdash; dominated by the Dynamic Table refresh.</li>
+    <li><strong>INGEST + dbt</strong> together accounted for 38% &mdash; both are I/O-heavy operations (COPY INTO and incremental MERGE).</li>
+    <li><strong>ML TDQ + STG BDQ</strong> are lightweight (21 sec combined, 6%) &mdash; Snowpark lazy aggregation keeps quality checks fast even at 322.5M rows.</li>
+    <li><strong>Throughput</strong>: ~880K rows/sec end-to-end, ~4.1M rows/sec for ingestion alone.</li>
+  </ul>
+
+  <div class="callout callout-info">
+    <strong>Next Steps</strong>
+    All warehouses are now MEDIUM. Re-running the stress test will capture updated per-task timings automatically. Comparing SMALL vs. MEDIUM results will quantify the performance gain from upsizing, particularly for the SDM BDQ task (Dynamic Table refresh).
+  </div>
+
+  <!-- ======================================================= -->
+  <h2 id="file-inventory">9. File Inventory</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>File</th><th>Purpose</th></tr></thead>
+      <tbody>
+        <tr><td><code>01_setup.sql</code></td><td>Initial setup and permissions</td></tr>
+        <tr><td><code>02_mirror_layer_parquet.sql</code></td><td>Parquet file format, stage, and ingestion stored procedure</td></tr>
+        <tr><td><code>03_audit_tables.sql</code></td><td>Audit and observability tables</td></tr>
+        <tr><td><code>04_sample_data_variant.sql</code></td><td>Synthetic test data (30M rows) and reference data</td></tr>
+        <tr><td><code>05_ml_tdq_optimized.sql</code></td><td>Mirror layer quality checks (17 checks, Snowpark + Great Expectations)</td></tr>
+        <tr><td><code>06_stg_bdq_optimized.sql</code></td><td>Staging layer quality checks (13 checks, includes referential integrity)</td></tr>
+        <tr><td><code>07_sdm_bdq_optimized.sql</code></td><td>Presentation layer quality checks (17 checks, cross-table consistency)</td></tr>
+        <tr><td><code>08_dynamic_tables.sql</code></td><td>Presentation layer Dynamic Table with derived columns</td></tr>
+        <tr><td><code>09_tasks.sql</code></td><td>6-task pipeline DAG (scheduled every 4 hours)</td></tr>
+        <tr><td><code>10_alerts.sql</code></td><td>Email alerting on quality check failures</td></tr>
+        <tr><td><code>e2e_test_parquet.sql</code></td><td>End-to-end test: reset, generate Parquet data, run pipeline, validate</td></tr>
+        <tr><td><code>e2e_stress_test_parquet.sql</code></td><td>Stress test: generate 5,000 Parquet files (322.5M rows), run pipeline, verify automated timing capture</td></tr>
+        <tr><td><code>dbt_project/</code></td><td>dbt project for VARIANT-to-typed transformation</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    <p>BlackRock EDP POC (Parquet) &mdash; Architecture &amp; Implementation Guide</p>
+    <p>Generated September 16, 2026</p>
+  </footer>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      securityLevel: 'strict',
+      theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default',
+      flowchart: { htmlLabels: false }
+    });
+  </script>
+</body>
+</html>

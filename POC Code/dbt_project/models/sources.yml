@@ -1,0 +1,26 @@
+version: 2
+sources:
+  - name: mirror
+    database: EDP_DB
+    schema: MIRROR
+    freshness:
+      warn_after:  {count: 4,  period: hour}
+      error_after: {count: 12, period: hour}
+    loaded_at_field: _LOADED_AT
+    tables:
+      - name: TRANSACTIONS_V2
+        description: "v2 Mirror layer: raw source data as VARIANT (OBJECT_CONSTRUCT)"
+        columns:
+          - name: RAW_DATA
+            description: "VARIANT column containing all source fields as JSON keys"
+          - name: _BATCH_ID
+            tests: [not_null]
+
+  - name: reference
+    database: EDP_DB
+    schema: REFERENCE
+    tables:
+      - name: ACCOUNTS
+        description: "Reference: valid account/portfolio identifiers"
+      - name: INSTRUMENTS
+        description: "Reference: valid financial instrument identifiers"

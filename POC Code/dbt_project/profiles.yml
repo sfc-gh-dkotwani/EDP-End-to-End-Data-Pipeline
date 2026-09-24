@@ -1,0 +1,12 @@
+edp_dbt_project_v2:
+  target: prod
+  outputs:
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT', 'xfa82517') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', 'dkotwani') }}"
+      role: EDP_ADMIN_ROLE
+      database: EDP_DB
+      warehouse: EDP_DBT_WH
+      schema: STAGING
+      threads: 4

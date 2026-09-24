@@ -1,0 +1,14 @@
+name: edp_dbt_project_v2
+version: '1.0.0'
+config-version: 2
+
+profile: edp_dbt_project_v2
+
+model-paths: ["models"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+models:
+  edp_dbt_project_v2:
+    staging:
+      +materialized: incremental

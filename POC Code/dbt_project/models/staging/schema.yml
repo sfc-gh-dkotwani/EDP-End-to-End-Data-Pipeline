@@ -1,0 +1,27 @@
+version: 2
+models:
+  - name: stg_transactions
+    description: "v2 Staged transactions: extracted from VARIANT, typed, cleansed, deduplicated"
+    columns:
+      - name: TXN_ID
+        description: "Unique transaction identifier (extracted from RAW_DATA:TXN_ID)"
+        tests: [not_null, unique]
+      - name: ACCOUNT_ID
+        description: "Portfolio/account identifier"
+        tests: [not_null]
+      - name: AMOUNT
+        description: "Transaction notional amount (DECIMAL 18,4)"
+        tests: [not_null]
+      - name: CURRENCY
+        description: "ISO currency code (uppercased)"
+        tests:
+          - accepted_values:
+              values: ['USD', 'EUR', 'GBP', 'JPY', 'CHF']
+      - name: TXN_DATE
+        description: "Transaction execution date"
+        tests: [not_null]
+      - name: STATUS
+        description: "Transaction lifecycle status"
+        tests:
+          - accepted_values:
+              values: ['PENDING', 'SETTLED', 'CANCELLED', 'FAILED']

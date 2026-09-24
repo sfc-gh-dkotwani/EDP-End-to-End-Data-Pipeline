@@ -189,10 +189,10 @@ The finalizer task (`FINALIZER_TASK_V2`) calls `RUN_FINALIZER_V2()`, which autom
 | Task | Warehouse | Size | Duration | % of Total |
 |------|-----------|------|----------|------------|
 | INGEST_TASK_V2 | EDP_INGEST_WH | MEDIUM | 79 sec | 22% |
-| ML_TDQ_TASK_V2 | EDP_TDQ_WH | MEDIUM | 13 sec | 4% |
-| DBT_TASK_V2 | EDP_DBT_WH | MEDIUM | 60 sec | 16% |
-| STG_BDQ_TASK_V2 | EDP_TDQ_WH | MEDIUM | 8 sec | 2% |
-| SDM_BDQ_TASK_V2 | EDP_TDQ_WH | MEDIUM | 198 sec | 54% |
+| ML_TDQ_TASK_V2 | EDP_TDQ_WH | SMALL | 13 sec | 4% |
+| DBT_TASK_V2 | EDP_DBT_WH | SMALL | 60 sec | 16% |
+| STG_BDQ_TASK_V2 | EDP_TDQ_WH | SMALL | 8 sec | 2% |
+| SDM_BDQ_TASK_V2 | EDP_TDQ_WH | SMALL | 198 sec | 54% |
 | **TOTAL E2E** | ALL | MEDIUM | **367 sec (~6.1 min)** | 100% |
 
 Timing is auto-captured by `RUN_FINALIZER_V2` (the last task in the DAG). Warehouse sizes are read dynamically via `SHOW WAREHOUSES`.

@@ -181,9 +181,7 @@ The finalizer task (`FINALIZER_TASK_V2`) calls `RUN_FINALIZER_V2()`, which autom
 | e2e_test.sql | End-to-end test (CSV path) |
 | e2e_test_parquet.sql | End-to-end test (Parquet path) |
 | e2e_stress_test_parquet.sql | Stress test: 5,000 files, 322.5M rows, automated timing |
-| EDP_POC_Architecture_Parquet.html | Architecture doc — Parquet variant (customer-facing) |
-| EDP_POC_Architecture_CSV.html | Architecture doc — CSV variant |
-| EDP_v2_POC_Architecture.html | Architecture overview |
+| EDP_POC_Architecture_Parquet.html | Architecture doc — Parquet variant |
 | dbt_project/ | dbt project: VARIANT-to-typed transformation |
 
 ## Stress Test Results (322.5M rows, 5,000 Parquet files)

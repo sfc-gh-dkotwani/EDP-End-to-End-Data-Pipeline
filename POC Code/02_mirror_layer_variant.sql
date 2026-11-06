@@ -66,6 +66,7 @@ CREATE FILE FORMAT IF NOT EXISTS EDP_DB.MIRROR.CSV_HEADER_FMT
     FIELD_OPTIONALLY_ENCLOSED_BY  = '"'
     SKIP_HEADER                   = 0
     TRIM_SPACE                    = TRUE
+    EMPTY_FIELD_AS_NULL           = FALSE   -- an empty header name stays '' (not NULL), so it is caught below
     ERROR_ON_COLUMN_COUNT_MISMATCH = FALSE
     COMMENT = 'CSV row 1 as data, for the per-batch header read';
 
@@ -83,7 +84,9 @@ CREATE FILE FORMAT IF NOT EXISTS EDP_DB.MIRROR.CSV_INFER_FMT
 ----------------------------------------------------------------------
 -- 2. VARIANT MIRROR TABLE
 ----------------------------------------------------------------------
-CREATE OR REPLACE TABLE EDP_DB.MIRROR.TRANSACTIONS_V2 (
+-- IF NOT EXISTS: never drop a loaded mirror. For an existing table, run
+-- 02a_migrate_mirror.sql to add the technical columns.
+CREATE TABLE IF NOT EXISTS EDP_DB.MIRROR.TRANSACTIONS_V2 (
     RAW_DATA        VARIANT,
     _LOADED_AT      TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
     _FILENAME       VARCHAR,
@@ -166,14 +169,24 @@ def read_headers(session, files) -> dict:
     cols = ", ".join(f"${i}" for i in range(1, MAX_COLS + 1))
     headers = {}
     for part in chunks(files, MAX_FILES):
-        pattern = "|".join(re.escape(f) for f in part)
+        # PATTERN must match the whole path, which includes the stage's own prefix
+        # (e.g. raw_stage/), so the relative paths need a leading .*. Backslashes are
+        # doubled so re.escape's \. survives the SQL string literal.
+        pattern = ".*(" + "|".join(re.escape(f) for f in part) + ")"
+        pattern = pattern.replace("\\", "\\\\")
         rows = session.sql(f"""
             SELECT METADATA$FILENAME, {cols}
             FROM {STAGE} (FILE_FORMAT => 'EDP_DB.MIRROR.CSV_HEADER_FMT', PATTERN => {lit(pattern)})
             WHERE METADATA$FILE_ROW_NUMBER = 1
             LIMIT {len(part)}""").collect()
         for r in rows:
-            names = [v for v in list(r)[1:] if v is not None]
+            # Drop only the trailing NULLs ($N past the file's last column). A NULL
+            # before the last name is an empty header field: keep it in position as
+            # '' so the check below rejects it, instead of shifting later keys left.
+            vals = list(r)[1:]
+            while vals and vals[-1] is None:
+                vals.pop()
+            names = ["" if v is None else v for v in vals]
             if names:
                 names[0] = names[0].lstrip("\ufeff")          # byte-order mark
             names = [n.strip() for n in names]

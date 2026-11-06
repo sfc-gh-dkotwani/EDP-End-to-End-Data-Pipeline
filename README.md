@@ -43,8 +43,16 @@ End-to-end data pipeline for BlackRock's transaction data on Snowflake. Parquet 
 -- 1. Set context + grant privileges (run as ACCOUNTADMIN)
 Run: 01_setup.sql
 
--- 2. Create VARIANT mirror table + Parquet file format + ingestion SP
-Run: 02_mirror_layer_parquet.sql
+-- 2. Create VARIANT mirror table + file format + ingestion SP
+Run ONE of these, for your source format (both define the same table and
+the same RUN_COPY_INTO_V2 procedure; the one run last wins):
+  02_mirror_layer_parquet.sql   -- Parquet sources (default for this POC)
+  02_mirror_layer_variant.sql   -- CSV sources, keyed by each file's header
+
+-- 2a. Existing account only: add the technical columns + stage directory
+Run: 02a_migrate_mirror.sql
+Note: Needed when TRANSACTIONS_V2 / RAW_STAGE already exist (the 02 scripts
+use IF NOT EXISTS and won't change them). Safe to re-run; skip on a fresh account.
 
 -- 3. Create audit tables (IF NOT EXISTS — safe to re-run)
 Run: 03_audit_tables.sql
@@ -174,6 +182,8 @@ The finalizer task (`FINALIZER_TASK_V2`) calls `RUN_FINALIZER_V2()`, which autom
 | 01_setup.sql | Database, schema, role, warehouse setup + grants |
 | 02_mirror_layer_parquet.sql | Parquet ingestion: file format, stage, VARIANT table, SP |
 | 02_mirror_layer_variant.sql | CSV ingestion: header read per batch, one header-keyed `COPY` per distinct header |
+| 02a_migrate_mirror.sql | Migrates an existing mirror: adds the technical columns, enables the stage directory (idempotent) |
+| TEST_PLAN_header_keyed_csv.md | Step-by-step test plan for the header-keyed CSV / technical columns changes (runs in a cloned database) |
 | 03_audit_tables.sql | Audit tables: TDQ_RESULTS, PIPELINE_RUNS, PERFORMANCE_BENCHMARKS, STRESS_TEST_RESULTS |
 | 04_sample_data_variant.sql | Synthetic test data + reference tables |
 | 05_ml_tdq_optimized.sql | ML TDQ: Snowpark lazy agg + GX metrics (17 checks, 2 scans) |

@@ -30,7 +30,17 @@ CREATE OR REPLACE TASK EDP_DB.ORCHESTRATION.INGEST_TASK_V2
     SCHEDULE    = 'USING CRON 0 */4 * * * UTC'
     COMMENT     = 'v2 Root task: loads Parquet into VARIANT mirror (named columns, no positional mapping)'
 AS
-    CALL EDP_DB.ORCHESTRATION.RUN_COPY_INTO_V2('TRANSACTIONS_V2');
+DECLARE
+    batch ARRAY;
+BEGIN
+    -- The batch: files on the stage not yet in the Mirror. In BlackRock's pipeline this is the batch
+    -- logger's list, passed by Airflow.
+    ALTER STAGE EDP_DB.MIRROR.RAW_STAGE REFRESH;
+    SELECT COALESCE(ARRAY_AGG(d.RELATIVE_PATH), ARRAY_CONSTRUCT()) INTO :batch
+    FROM DIRECTORY(@EDP_DB.MIRROR.RAW_STAGE) d
+    WHERE NOT EXISTS (SELECT 1 FROM EDP_DB.MIRROR.TRANSACTIONS_V2 m WHERE m._FILENAME = d.RELATIVE_PATH);
+    CALL EDP_DB.ORCHESTRATION.RUN_COPY_INTO_V2('TRANSACTIONS_V2', :batch);
+END;
 
 ----------------------------------------------------------------------
 -- 2. ML TDQ TASK: Snowpark lazy agg + GX on VARIANT mirror

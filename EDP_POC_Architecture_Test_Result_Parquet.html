@@ -131,19 +131,24 @@ graph LR
   <h2 id="data-ingestion">3. Data Ingestion</h2>
 
   <h3>How Data Enters Snowflake</h3>
-  <p>Parquet files are uploaded to an internal Snowflake stage. The ingestion task runs a single <code>COPY INTO</code> statement that loads each Parquet row directly as a VARIANT object. Because Parquet is self-describing (column names are embedded in the file metadata), no positional mapping is needed:</p>
+  <p>Parquet files are uploaded to an internal Snowflake stage. The ingestion task lists the files not yet loaded (from the stage's directory table) and passes them to the ingestion procedure as an explicit batch. The procedure loads each Parquet row directly as a VARIANT object. Because Parquet is self-describing (column names are embedded in the file metadata), no positional mapping is needed:</p>
 
-  <pre><code>COPY INTO TRANSACTIONS (RAW_DATA, _FILENAME, _FILE_ROW_NUM, _BATCH_ID)
+  <pre><code>COPY INTO TRANSACTIONS_V2 (RAW_DATA, _FILENAME, _FILE_ROW_NUM, _BATCH_ID, ...technical columns)
 FROM (
     SELECT
         $1,
         METADATA$FILENAME,
         METADATA$FILE_ROW_NUMBER,
-        '&lt;batch_uuid&gt;'
-    FROM @RAW_STAGE (FILE_FORMAT =&gt; 'PARQUET_FMT')
+        '&lt;batch_uuid&gt;',
+        ...
+    FROM @RAW_STAGE
 )
-ON_ERROR = 'SKIP_FILE'
-FORCE    = FALSE</code></pre>
+FILES       = ('&lt;file_1&gt;', '&lt;file_2&gt;', ...)   -- up to 1,000 per COPY
+FILE_FORMAT = (FORMAT_NAME = 'PARQUET_FMT')
+ON_ERROR    = ABORT_STATEMENT
+FORCE       = FALSE</code></pre>
+
+  <p>Batches larger than 1,000 files are split into several COPY statements, all run inside one transaction.</p>
 
   <p>Parquet <code>$1</code> is a VARIANT object that automatically contains all column names and values from the file. Adding, removing, or reordering columns in the source file has no effect on the ingestion mapping.</p>
 
@@ -164,16 +169,17 @@ FORCE    = FALSE</code></pre>
         <tr><td><code>_FILENAME</code></td><td>Which file this row came from</td></tr>
         <tr><td><code>_FILE_ROW_NUM</code></td><td>The row number within that file</td></tr>
         <tr><td><code>_BATCH_ID</code></td><td>A unique ID grouping all rows from the same pipeline run</td></tr>
+        <tr><td>EDP technical columns</td><td><code>DATA_DOMAIN</code>, <code>PROVIDER_NM</code>, <code>PROVIDER_FILE_ID</code>, <code>PROVIDER_FILE_NM</code>, <code>FILE_RECORD_NBR</code>, <code>CORRECTION_FL</code>, <code>UNIQUE_HASH_ID</code>, <code>ROW_HASH_ID</code>, <code>CREATED_DTS</code> / <code>UPDATED_DTS</code> and related audit fields, filled in the same COPY from the run context and file metadata. Hash definitions are placeholders until agreed with BlackRock.</td></tr>
       </tbody>
     </table>
   </div>
 
   <h3>Error Handling</h3>
   <ul>
-    <li><strong>Corrupt files</strong> are skipped (<code>ON_ERROR = SKIP_FILE</code>) &mdash; the rest of the batch loads successfully</li>
+    <li><strong>Atomic batches</strong> &mdash; all COPY statements for a batch run in one transaction with <code>ON_ERROR = ABORT_STATEMENT</code>. If any file fails, the whole batch is rolled back and nothing is loaded, so the mirror never holds a partial batch.</li>
     <li><strong>New columns</strong> in the Parquet file appear as new keys in the VARIANT &mdash; existing downstream logic is unaffected</li>
     <li><strong>Already-loaded files</strong> are not re-processed (<code>FORCE = FALSE</code>) &mdash; prevents duplicate data</li>
-    <li><strong>Null representations</strong> (<code>NULL</code>, empty string, <code>N/A</code>, <code>\N</code>) are normalized to SQL NULL</li>
+    <li><strong>Nulls</strong> are carried natively by Parquet and land as JSON null in the VARIANT</li>
   </ul>
 
   <!-- ======================================================= -->

@@ -9,8 +9,10 @@ End-to-end data pipeline for BlackRock's transaction data on Snowflake. Parquet 
 | Feature | Approach |
 |---------|----------|
 | Mirror table | Single VARIANT column — schema-flexible, no ALTER TABLE for new columns |
-| Ingestion | Parquet `$1` loaded directly as named VARIANT — no schema inference needed |
-| Schema evolution | Automatic — new Parquet columns appear as new VARIANT keys |
+| Ingestion | Parquet `$1` loaded directly as named VARIANT; CSV keyed by each file's header (one header read per batch, one `COPY` per distinct header) — no schema inference needed |
+| Schema evolution | Automatic — new Parquet or CSV columns appear as new VARIANT keys; moved or dropped CSV columns keep their names |
+| Batch | Explicit file list (`FILES =`); the batch's `COPY`s run in one transaction with `ON_ERROR = ABORT_STATEMENT` — it loads whole or not at all |
+| Technical columns | BlackRock EDP technical columns filled in the same `COPY`, alongside the `_` columns |
 | Data quality | Snowpark lazy aggregation (1 scan) + GX validates 1-row metrics DF |
 | Scan efficiency | ~8 table scans per pipeline run across all 3 validation layers |
 | Scalability | Tested with 5,000 files / 322.5M rows — no bottlenecks at file count |
@@ -158,10 +160,12 @@ The finalizer task (`FINALIZER_TASK_V2`) calls `RUN_FINALIZER_V2()`, which autom
 1. **TRUNCATE breaks change tracking** — after truncating a table, re-enable change tracking and recreate the Dynamic Table
 2. **DOWNSTREAM TARGET_LAG** — must explicitly `ALTER DYNAMIC TABLE ... REFRESH` from stored procedures
 3. **Batch ID resolution** — use `ORDER BY _LOADED_AT DESC LIMIT 1`, not `MAX(_BATCH_ID)` (UUID v4 is random)
-4. **Parquet vs CSV ingestion** — Parquet files are self-describing (column names in file metadata). `COPY INTO` loads Parquet `$1` directly as a named VARIANT. For CSV sources, positional `$N` mapping with `OBJECT_CONSTRUCT` is required. See `02_mirror_layer_parquet.sql` (Parquet) and `02_mirror_layer_variant.sql` (CSV).
-5. **TRY_CAST from VARIANT** — `TRY_CAST(variant_col AS type)` fails. Must cast to VARCHAR first: `TRY_CAST(variant_col::VARCHAR AS type)`.
-6. **snow CLI v3.x+ required** — `snow dbt deploy` requires Snowflake CLI v3.x+.
-7. **CREATE DBT PROJECT privilege** — must be granted explicitly: `GRANT CREATE DBT PROJECT ON SCHEMA ... TO ROLE ...` (included in `01_setup.sql`).
+4. **Parquet vs CSV ingestion** — Parquet files are self-describing (column names in file metadata). `COPY INTO` loads Parquet `$1` directly as a named VARIANT. CSV headers can't be read inside a `COPY` transformation (`PARSE_HEADER` is not allowed there), so the CSV procedure reads row 1 of every file in the batch first, in one query, and generates one `COPY` per distinct header. The header read ends in `LIMIT <files>`, which lets it stop early on large files. See `02_mirror_layer_parquet.sql` (Parquet) and `02_mirror_layer_variant.sql` (CSV).
+5. **`FILES =` takes at most 1,000 files** — the procedures split a larger batch into several `COPY`s inside the same transaction.
+6. **Malformed CSV rows load quietly** — `ERROR_ON_COLUMN_COUNT_MISMATCH` does not apply to `COPY` transformations: extra fields are dropped and missing ones are NULL. ML TDQ catches the NULLs.
+7. **TRY_CAST from VARIANT** — `TRY_CAST(variant_col AS type)` fails. Must cast to VARCHAR first: `TRY_CAST(variant_col::VARCHAR AS type)`.
+8. **snow CLI v3.x+ required** — `snow dbt deploy` requires Snowflake CLI v3.x+.
+9. **CREATE DBT PROJECT privilege** — must be granted explicitly: `GRANT CREATE DBT PROJECT ON SCHEMA ... TO ROLE ...` (included in `01_setup.sql`).
 
 ## File Inventory
 
@@ -169,7 +173,7 @@ The finalizer task (`FINALIZER_TASK_V2`) calls `RUN_FINALIZER_V2()`, which autom
 |------|---------|
 | 01_setup.sql | Database, schema, role, warehouse setup + grants |
 | 02_mirror_layer_parquet.sql | Parquet ingestion: file format, stage, VARIANT table, SP |
-| 02_mirror_layer_variant.sql | CSV ingestion: positional OBJECT_CONSTRUCT mapping |
+| 02_mirror_layer_variant.sql | CSV ingestion: header read per batch, one header-keyed `COPY` per distinct header |
 | 03_audit_tables.sql | Audit tables: TDQ_RESULTS, PIPELINE_RUNS, PERFORMANCE_BENCHMARKS, STRESS_TEST_RESULTS |
 | 04_sample_data_variant.sql | Synthetic test data + reference tables |
 | 05_ml_tdq_optimized.sql | ML TDQ: Snowpark lazy agg + GX metrics (17 checks, 2 scans) |
